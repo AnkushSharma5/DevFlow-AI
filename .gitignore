@@ -5,8 +5,13 @@ server/node_modules/
 
 # Environment variables — NEVER commit real .env files
 .env
+.env.*
+!.env.example
 server/.env
+server/.env.*
 client/.env
+client/.env.*
+!client/.env.example
 
 # Build outputs
 client/dist/

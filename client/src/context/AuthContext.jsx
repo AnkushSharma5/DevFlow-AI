@@ -9,8 +9,9 @@
  *   login() → store token in localStorage → set user in state
  *   logout() → clear localStorage → clear state → redirect to /login
  */
-import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
 import { getMe } from '../services/api';
+import { shouldDiscardStoredToken } from '../utils/authErrors';
 
 // ---------------------------------------------------------------------------
 // State shape and initial state
@@ -20,6 +21,7 @@ const initialState = {
   token: localStorage.getItem('devflow_token') || null,
   isLoading: true, // true while we're verifying the stored token on startup
   isAuthenticated: false,
+  authError: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ const authReducer = (state, action) => {
         token: action.payload.token,
         isAuthenticated: true,
         isLoading: false,
+        authError: null,
       };
     case 'AUTH_FAILURE':
     case 'LOGOUT':
@@ -43,9 +46,12 @@ const authReducer = (state, action) => {
         token: null,
         isAuthenticated: false,
         isLoading: false,
+        authError: null,
       };
+    case 'AUTH_CHECK_ERROR':
+      return { ...state, user: null, isAuthenticated: false, isLoading: false, authError: action.payload };
     case 'SET_LOADING':
-      return { ...state, isLoading: action.payload };
+      return { ...state, isLoading: action.payload, authError: action.payload ? null : state.authError };
     default:
       return state;
   }
@@ -61,28 +67,32 @@ export const AuthProvider = ({ children }) => {
 
   // On mount, verify the stored token by calling /api/auth/me.
   // This handles the case where the token has expired between sessions.
-  useEffect(() => {
-    const verifyToken = async () => {
-      const storedToken = localStorage.getItem('devflow_token');
-      if (!storedToken) {
-        dispatch({ type: 'AUTH_FAILURE' });
-        return;
-      }
-      try {
-        const res = await getMe();
-        dispatch({
-          type: 'AUTH_SUCCESS',
-          payload: { user: res.data.user, token: storedToken },
-        });
-      } catch {
-        // Token is invalid or expired — clean up
+  const verifyToken = useCallback(async () => {
+    const storedToken = localStorage.getItem('devflow_token');
+    if (!storedToken) {
+      dispatch({ type: 'AUTH_FAILURE' });
+      return;
+    }
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+    try {
+      const res = await getMe();
+      dispatch({
+        type: 'AUTH_SUCCESS',
+        payload: { user: res.data.user, token: storedToken },
+      });
+    } catch (error) {
+      if (shouldDiscardStoredToken(error)) {
         localStorage.removeItem('devflow_token');
         dispatch({ type: 'AUTH_FAILURE' });
+      } else {
+        // A network or server outage does not invalidate an otherwise unverified token.
+        dispatch({ type: 'AUTH_CHECK_ERROR', payload: 'Could not verify your session. Check the connection and retry.' });
       }
-    };
-
-    verifyToken();
+    }
   }, []);
+
+  useEffect(() => { verifyToken(); }, [verifyToken]);
 
   // ---------------------------------------------------------------------------
   // Actions
@@ -101,7 +111,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ ...state, login, logout }}>
+    <AuthContext.Provider value={{ ...state, login, logout, retryAuth: verifyToken }}>
       {children}
     </AuthContext.Provider>
   );

@@ -8,7 +8,8 @@
     "server": "cd server && npm run dev",
     "client": "cd client && npm run dev",
     "install:all": "npm install && cd client && npm install && cd ../server && npm install",
-    "test:api": "node test-api.js"
+    "test": "node --test",
+    "test:api": "node --test server/test/api.test.js server/test/live.integration.test.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

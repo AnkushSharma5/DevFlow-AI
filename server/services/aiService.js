@@ -14,34 +14,24 @@
  *   3. Wire it up in aiController.js
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const OpenAI = require('openai');
+const { parseAIResponse } = require('./aiResponse');
+const { createGeminiAdapter } = require('./geminiAdapter');
 
 // ---------------------------------------------------------------------------
 // Provider initialization (lazy — only the active provider is initialized)
 // ---------------------------------------------------------------------------
 
-let geminiModel = null;
+const geminiAdapter = createGeminiAdapter(GoogleGenAI);
 let openaiClient = null;
-
-const getGeminiModel = () => {
-  if (!geminiModel) {
-    if (!process.env.GEMINI_API_KEY) {
-      throw new Error('GEMINI_API_KEY is not set in environment variables');
-    }
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const modelName = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
-    geminiModel = genAI.getGenerativeModel({ model: modelName });
-  }
-  return geminiModel;
-};
 
 const getOpenAIClient = () => {
   if (!openaiClient) {
     if (!process.env.OPENAI_API_KEY) {
       throw new Error('OPENAI_API_KEY is not set in environment variables');
     }
-    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    openaiClient = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000, maxRetries: 0 });
   }
   return openaiClient;
 };
@@ -52,30 +42,8 @@ const getOpenAIClient = () => {
 
 const isKeyConfigured = () => {
   const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-  if (provider === 'openai') {
-    return !!process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('your_');
-  }
-  return !!process.env.GEMINI_API_KEY && !process.env.GEMINI_API_KEY.includes('your_');
-};
-
-/**
- * Safely extracts and parses JSON from the LLM's raw response.
- * Handles markdown code fences and any surrounding text.
- *
- * @param {string} raw - Raw string response from LLM
- * @returns {object} Parsed JSON object
- */
-const parseAIResponse = (raw) => {
-  if (!raw || typeof raw !== 'string') {
-    throw new Error('AI returned an empty or non-string response');
-  }
-  // Try extracting JSON enclosed in curly braces first
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    return JSON.parse(jsonMatch[0]);
-  }
-  const cleaned = raw.replace(/```(?:json)?\n?/gi, '').replace(/```\n?/g, '').trim();
-  return JSON.parse(cleaned);
+  const key = provider === 'openai' ? process.env.OPENAI_API_KEY : process.env.GEMINI_API_KEY;
+  return typeof key === 'string' && key.trim().length > 0 && !/your[_-]?|change.?me|replace|example|placeholder/i.test(key);
 };
 
 /**
@@ -85,35 +53,38 @@ const parseAIResponse = (raw) => {
 const callAI = async (prompt) => {
   const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
 
-  if (!isKeyConfigured()) {
-    const keyName = provider === 'openai' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
-    console.error(`❌ AI configuration error: ${keyName} is missing or placeholder in environment variables.`);
-    throw new Error(`${keyName} is not configured in environment variables`);
+  if (!['gemini', 'openai'].includes(provider)) {
+    const error = new Error('AI provider configuration is invalid.');
+    error.code = 'AI_CONFIG_INVALID';
+    throw error;
   }
 
-  // Log the final prompt string right before the API call to verify proper code/input interpolation
-  console.log(`\n==================== [AI DISPATCH: ${provider.toUpperCase()}] ====================`);
-  console.log(prompt.trim());
-  console.log('=================================================================\n');
+  if (!isKeyConfigured()) {
+    const error = new Error('AI provider key is missing or is a placeholder.');
+    error.code = 'AI_CONFIG_MISSING';
+    throw error;
+  }
 
   try {
     if (provider === 'openai') {
       const client = getOpenAIClient();
-      const model = process.env.OPENAI_MODEL || 'gpt-4o';
+      const model = process.env.OPENAI_MODEL || 'gpt-6-luna';
       const response = await client.chat.completions.create({
         model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.7,
       });
-      return response.choices[0].message.content;
+      return response.choices?.[0]?.message?.content || '';
     }
 
     // Default: Gemini
-    const model = getGeminiModel();
-    const result = await model.generateContent(prompt);
-    return result.response.text();
+    const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+    return await geminiAdapter.generateContent({
+      apiKey: process.env.GEMINI_API_KEY,
+      model,
+      prompt,
+    });
   } catch (apiError) {
-    console.error(`❌ AI API call failed (${provider}):`, apiError.message || apiError);
+    console.error('AI provider request failed:', provider, apiError.status || apiError.code || apiError.name || 'unknown');
     // Rethrow to ensure failures are propagated and visible instead of masked with mock data
     throw apiError;
   }
@@ -154,7 +125,7 @@ Requirements:
 `;
 
   const raw = await callAI(prompt);
-  return parseAIResponse(raw);
+  return parseAIResponse(raw, 'breakdown');
 };
 
 // ---------------------------------------------------------------------------
@@ -189,7 +160,7 @@ Be clear, educational, and specific. Avoid jargon without explanation.
 `;
 
   const raw = await callAI(prompt);
-  return parseAIResponse(raw);
+  return parseAIResponse(raw, 'explain');
 };
 
 // ---------------------------------------------------------------------------
@@ -230,7 +201,7 @@ Be precise and actionable. If you cannot determine the cause from context, say s
 `;
 
   const raw = await callAI(prompt);
-  return parseAIResponse(raw);
+  return parseAIResponse(raw, 'debug');
 };
 
 // ---------------------------------------------------------------------------
@@ -267,7 +238,7 @@ Be professional, clear, and thorough. Format any code inside the JSON string val
 `;
 
   const raw = await callAI(prompt);
-  return parseAIResponse(raw);
+  return parseAIResponse(raw, 'docs');
 };
 
 module.exports = { breakdownTask, explainCode, debugCode, generateDocs };

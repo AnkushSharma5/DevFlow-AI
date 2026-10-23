@@ -8,6 +8,8 @@ const ProjectCard = ({ project, taskStats, onEdit, onDelete }) => {
   const navigate = useNavigate();
 
   // taskStats: { total, done } — passed from parent (Projects page)
+  const statsUnavailable = taskStats?.unavailable;
+  const statsLoading = !taskStats || taskStats.loading;
   const total = taskStats?.total ?? 0;
   const done = taskStats?.done ?? 0;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -75,13 +77,15 @@ const ProjectCard = ({ project, taskStats, onEdit, onDelete }) => {
           <div className="progress-bar-fill" style={{ width: `${pct}%` }} />
         </div>
         <div className="progress-label">
-          {total > 0 ? `${done} / ${total} tasks completed (${pct}%)` : 'No tasks yet'}
+          {statsUnavailable ? 'Task totals unavailable' : statsLoading ? 'Loading task totals...' : total > 0 ? `${done} / ${total} tasks completed (${pct}%)` : 'No tasks yet'}
         </div>
       </div>
 
       <div className="project-card-footer">
         <span className="project-card-meta">Created {formattedDate}</span>
-        <span className="project-card-meta">{total} task{total !== 1 ? 's' : ''}</span>
+        <span className="project-card-meta">
+          {statsUnavailable ? 'Task total unavailable' : statsLoading ? 'Loading tasks...' : `${total} task${total !== 1 ? 's' : ''}`}
+        </span>
       </div>
     </div>
   );

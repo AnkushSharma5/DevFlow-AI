@@ -207,7 +207,7 @@ const AITools = () => {
         <div className="page-header">
           <div>
             <h1 className="page-title">AI Developer Tools ✦</h1>
-            <p className="page-subtitle">Powered by Google Gemini AI — your coding co-pilot</p>
+            <p className="page-subtitle">Powered by the AI provider configured for this workspace</p>
           </div>
         </div>
 

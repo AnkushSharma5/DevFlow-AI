@@ -7,6 +7,7 @@ import Navbar from '../components/Navbar';
 import KanbanBoard from '../components/KanbanBoard';
 import TaskModal from '../components/TaskModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { moveTaskToStatus, reorderTaskList, placeTaskInColumn } from '../utils/taskOrdering';
 
 /**
  * ProjectDetails page — shows a single project with its full Kanban board.
@@ -60,7 +61,11 @@ const ProjectDetails = () => {
     if (taskModal.task) {
       // Editing existing task
       const res = await updateTask(taskModal.task._id, taskData);
-      setTasks((prev) => prev.map((t) => (t._id === taskModal.task._id ? res.data.task : t)));
+      if (res.data.task.status !== taskModal.task.status) {
+        setTasks((prev) => placeTaskInColumn(prev, res.data.task._id, res.data.task.status, res.data.task.order));
+      } else {
+        setTasks((prev) => prev.map((t) => (t._id === taskModal.task._id ? res.data.task : t)));
+      }
     } else {
       // Creating new task
       const res = await createTask({ ...taskData, projectId: id });
@@ -80,32 +85,25 @@ const ProjectDetails = () => {
     // Dropped outside any column or in same position
     if (!destination || (destination.droppableId === source.droppableId && destination.index === source.index)) return;
 
-    const newStatus = destination.droppableId; // droppableId === status string
-
-    // Optimistic update — update UI immediately
-    setTasks((prev) =>
-      prev.map((t) => (t._id === draggableId ? { ...t, status: newStatus } : t))
-    );
+    const previousTasks = tasks;
+    setTasks(reorderTaskList(previousTasks, result));
 
     // Persist to backend
     try {
-      await updateTaskStatus(draggableId, { status: newStatus, order: destination.index });
+      await updateTaskStatus(draggableId, { status: destination.droppableId, order: destination.index });
     } catch {
-      // Rollback on failure
-      setTasks((prev) =>
-        prev.map((t) => (t._id === draggableId ? { ...t, status: source.droppableId } : t))
-      );
+      setTasks(previousTasks);
     }
   };
 
   // Fallback: status dropdown change (same logic as drag-end)
   const handleStatusChange = async (taskId, newStatus) => {
-    setTasks((prev) => prev.map((t) => (t._id === taskId ? { ...t, status: newStatus } : t)));
+    const previousTasks = tasks;
+    setTasks(moveTaskToStatus(previousTasks, taskId, newStatus));
     try {
       await updateTaskStatus(taskId, { status: newStatus });
     } catch {
-      // Reload on failure
-      loadData();
+      setTasks(previousTasks);
     }
   };
 
@@ -149,7 +147,10 @@ const ProjectDetails = () => {
       <>
         <Navbar title="Project" />
         <main className="page-container">
-          <div className="alert alert-error">{error}</div>
+          <div className="alert alert-error" role="alert">
+            {error}
+            <button className="btn btn-secondary btn-sm" style={{ marginLeft: '12px' }} onClick={loadData}>Retry</button>
+          </div>
           <Link to="/projects" className="btn btn-secondary" style={{ marginTop: '16px', display: 'inline-flex' }}>
             ← Back to Projects
           </Link>

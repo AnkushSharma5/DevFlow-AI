@@ -12,12 +12,27 @@ import LoadingSpinner from './LoadingSpinner';
  * If authenticated, renders the application layout with Sidebar and Outlet.
  */
 const ProtectedRoute = () => {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, authError, retryAuth, logout } = useAuth();
 
   if (isLoading) {
     return (
       <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center' }}>
         <LoadingSpinner text="Checking authentication..." />
+      </div>
+    );
+  }
+
+  if (authError) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card" role="alert">
+          <h1 className="auth-heading">Session check unavailable</h1>
+          <p className="auth-subheading">{authError}</p>
+          <div style={{ display: 'flex', gap: '12px' }}>
+            <button className="btn btn-primary" onClick={retryAuth}>Retry</button>
+            <button className="btn btn-secondary" onClick={logout}>Sign out</button>
+          </div>
+        </div>
       </div>
     );
   }

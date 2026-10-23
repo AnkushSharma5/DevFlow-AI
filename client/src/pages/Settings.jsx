@@ -12,7 +12,7 @@ const Settings = () => {
         <div className="page-header">
           <div>
             <h1 className="page-title">Settings & Profile</h1>
-            <p className="page-subtitle">Manage your account information and workspace preferences</p>
+            <p className="page-subtitle">View your account information and backend AI integration details</p>
           </div>
         </div>
 
@@ -60,7 +60,7 @@ const Settings = () => {
           <div className="card">
             <div className="card-header">
               <h3>AI Engine Integration</h3>
-              <span className="badge badge-inprogress">Gemini 1.5 Flash</span>
+              <span className="badge badge-inprogress">Backend configured</span>
             </div>
             <p style={{ color: 'var(--color-text-secondary)', fontSize: '0.9rem', marginBottom: '16px' }}>
               DevFlow AI uses backend-mediated AI queries. The API keys remain securely on the server and are never exposed to the client.
@@ -68,7 +68,7 @@ const Settings = () => {
 
             <div className="form-group">
               <label className="form-label">Configured Provider</label>
-              <input className="form-input" disabled value="Google Gemini (Swappable to OpenAI)" />
+              <input className="form-input" disabled value="Managed by server configuration" />
             </div>
 
             <div className="form-group">

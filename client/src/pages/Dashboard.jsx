@@ -9,9 +9,11 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const Dashboard = () => {
   const { user } = useAuth();
-  const { projects, fetchProjects, isLoading: projectsLoading } = useProjects();
+  const { projects, fetchProjects, isLoading: projectsLoading, error: projectsError } = useProjects();
   const [tasks, setTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState('');
+  const [tasksReloadKey, setTasksReloadKey] = useState(0);
   const navigate = useNavigate();
 
   // Fetch projects on mount if not already loaded
@@ -24,24 +26,26 @@ const Dashboard = () => {
   useEffect(() => {
     const fetchAllTasks = async () => {
       if (projects.length === 0) {
+        setTasks([]);
+        setTasksError('');
         setTasksLoading(false);
         return;
       }
       setTasksLoading(true);
+      setTasksError('');
       try {
-        const results = await Promise.all(
-          projects.map((p) => getTasks(p._id).catch(() => ({ data: { tasks: [] } })))
-        );
+        const results = await Promise.all(projects.map((p) => getTasks(p._id)));
         const allTasks = results.flatMap((r) => r.data.tasks);
         setTasks(allTasks);
       } catch {
         setTasks([]);
+        setTasksError('Task metrics could not be loaded. Retry to refresh the dashboard.');
       } finally {
         setTasksLoading(false);
       }
     };
     fetchAllTasks();
-  }, [projects]);
+  }, [projects, tasksReloadKey]);
 
   // Derived statistics
   const totalProjects = projects.length;
@@ -60,6 +64,26 @@ const Dashboard = () => {
 
   if (projectsLoading || tasksLoading) {
     return <LoadingSpinner text="Loading dashboard..." />;
+  }
+
+  if (projectsError || tasksError) {
+    return (
+      <>
+        <Navbar title="Dashboard" />
+        <main className="page-container">
+          <div className="alert alert-error" role="alert">
+            {projectsError || tasksError}
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: '12px' }}
+              onClick={() => projectsError ? fetchProjects() : setTasksReloadKey((key) => key + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        </main>
+      </>
+    );
   }
 
   const greeting = () => {

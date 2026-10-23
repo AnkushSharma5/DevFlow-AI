@@ -10,9 +10,10 @@ import axios from 'axios';
 // ---------------------------------------------------------------------------
 // Axios instance
 // ---------------------------------------------------------------------------
-// Base URL is empty in dev — Vite's proxy forwards /api → localhost:5000
+// Development defaults to Vite's /api proxy. Set VITE_API_BASE_URL at build time
+// when the frontend and API are deployed on different origins.
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   headers: { 'Content-Type': 'application/json' },
   timeout: 30000, // 30 second timeout (AI requests can be slow)
 });

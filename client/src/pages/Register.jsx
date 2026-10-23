@@ -17,8 +17,12 @@ const Register = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    if (form.password.length < 6) {
-      setError('Password must be at least 6 characters.');
+    if (new TextEncoder().encode(form.password).length > 72) {
+      setError('Password cannot exceed 72 UTF-8 bytes.');
+      return;
+    }
+    if (form.password.length < 8) {
+      setError('Password must be at least 8 characters.');
       return;
     }
     setIsLoading(true);
@@ -90,10 +94,11 @@ const Register = () => {
               className="form-input"
               value={form.password}
               onChange={handleChange}
-              placeholder="Min. 6 characters"
+              placeholder="At least 8 characters"
               required
               autoComplete="new-password"
-              minLength={6}
+              minLength={8}
+              maxLength={72}
             />
           </div>
 

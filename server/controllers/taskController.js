@@ -1,5 +1,25 @@
 const Task = require('../models/Task');
 const Project = require('../models/Project');
+const { planTaskReorder } = require('../services/taskOrdering');
+const { runProjectExclusive } = require('../services/projectLock');
+
+const persistTaskReorder = async (task, userId, targetStatus, targetOrder) => {
+  const siblings = await Task.find({ projectId: task.projectId, userId })
+    .sort({ status: 1, order: 1, createdAt: 1, _id: 1 });
+  const changes = planTaskReorder(siblings, task._id, targetStatus, targetOrder);
+  if (changes === null) return null;
+
+  if (changes.length > 0) {
+    await Task.bulkWrite(changes.map(({ task: item, status, order }) => ({
+      updateOne: {
+        filter: { _id: item._id, userId },
+        update: { $set: { status, order } },
+      },
+    })));
+  }
+
+  return Task.findOne({ _id: task._id, userId });
+};
 
 /**
  * Helper: verify the project exists and belongs to the requesting user.
@@ -27,7 +47,7 @@ const getTasks = async (req, res, next) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const tasks = await Task.find({ projectId }).sort({ status: 1, order: 1, createdAt: 1 });
+    const tasks = await Task.find({ projectId, userId: req.user._id }).sort({ status: 1, order: 1, createdAt: 1, _id: 1 });
     res.json({ tasks });
   } catch (error) {
     next(error);
@@ -42,26 +62,26 @@ const getTasks = async (req, res, next) => {
 const createTask = async (req, res, next) => {
   try {
     const { projectId, title, description, status, priority, dueDate } = req.body;
+    const task = await runProjectExclusive(req.user._id, projectId, async () => {
+      const project = await verifyProjectOwnership(projectId, req.user._id);
+      if (!project) return null;
 
-    const project = await verifyProjectOwnership(projectId, req.user._id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+      // Determine order while holding the same lock as other task mutations.
+      const lastTask = await Task.findOne({ projectId, userId: req.user._id, status: status || 'TODO' }).sort({ order: -1 });
+      const order = lastTask ? lastTask.order + 1 : 0;
 
-    // Determine order: place new task at the end of its status column
-    const lastTask = await Task.findOne({ projectId, status: status || 'TODO' }).sort({ order: -1 });
-    const order = lastTask ? lastTask.order + 1 : 0;
-
-    const task = await Task.create({
-      title,
-      description,
-      status,
-      priority,
-      dueDate,
-      projectId,
-      userId: req.user._id,
-      order,
+      return Task.create({
+        title,
+        description,
+        status,
+        priority,
+        dueDate,
+        projectId,
+        userId: req.user._id,
+        order,
+      });
     });
+    if (!task) return res.status(404).json({ message: 'Project not found' });
 
     res.status(201).json({ task });
   } catch (error) {
@@ -87,23 +107,36 @@ const getTask = async (req, res, next) => {
 
 /**
  * PUT /api/tasks/:id
- * Updates any task fields, including status (used for kanban drag-and-drop).
- * Body: { title?, description?, status?, priority?, dueDate?, order? }
+ * Updates supplied task metadata and optionally moves it to another status column.
+ * Body: { title?, description?, status?, priority?, dueDate? }
  */
 const updateTask = async (req, res, next) => {
   try {
-    const { title, description, status, priority, dueDate, order } = req.body;
+    const filter = { _id: req.params.id, userId: req.user._id };
+    const beforeLock = await Task.findOne(filter);
+    if (!beforeLock) return res.status(404).json({ message: 'Task not found' });
 
-    const task = await Task.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user._id },
-      { title, description, status, priority, dueDate, order },
-      { new: true, runValidators: true }
-    );
+    const task = await runProjectExclusive(req.user._id, beforeLock.projectId, async () => {
+      const existing = await Task.findOne(filter);
+      if (!existing) return null;
 
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
+      const updates = Object.fromEntries(
+        ['title', 'description', 'priority', 'dueDate']
+          .filter((field) => Object.hasOwn(req.body, field))
+          .map((field) => [field, req.body[field]])
+      );
+      let updated = Object.keys(updates).length
+        ? await Task.findOneAndUpdate(filter, updates, { new: true, runValidators: true })
+        : existing;
+      if (!updated) return null;
 
+      if (req.body.status && req.body.status !== existing.status) {
+        updated = await persistTaskReorder(updated, req.user._id, req.body.status);
+      }
+      return updated;
+    });
+
+    if (!task) return res.status(404).json({ message: 'Task not found' });
     res.json({ task });
   } catch (error) {
     next(error);
@@ -116,7 +149,12 @@ const updateTask = async (req, res, next) => {
  */
 const deleteTask = async (req, res, next) => {
   try {
-    const task = await Task.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+    const filter = { _id: req.params.id, userId: req.user._id };
+    const beforeLock = await Task.findOne(filter);
+    if (!beforeLock) return res.status(404).json({ message: 'Task not found' });
+    const task = await runProjectExclusive(req.user._id, beforeLock.projectId, async () => (
+      Task.findOneAndDelete(filter)
+    ));
     if (!task) {
       return res.status(404).json({ message: 'Task not found' });
     }
@@ -134,17 +172,15 @@ const deleteTask = async (req, res, next) => {
 const updateTaskStatus = async (req, res, next) => {
   try {
     const { status, order } = req.body;
-
-    const task = await Task.findOneAndUpdate(
-      { _id: req.params.id, userId: req.user._id },
-      { status, ...(order !== undefined && { order }) },
-      { new: true, runValidators: true }
-    );
-
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
-
+    const filter = { _id: req.params.id, userId: req.user._id };
+    const beforeLock = await Task.findOne(filter);
+    if (!beforeLock) return res.status(404).json({ message: 'Task not found' });
+    const task = await runProjectExclusive(req.user._id, beforeLock.projectId, async () => {
+      const existing = await Task.findOne(filter);
+      if (!existing) return null;
+      return persistTaskReorder(existing, req.user._id, status, order);
+    });
+    if (!task) return res.status(404).json({ message: 'Task not found' });
     res.json({ task });
   } catch (error) {
     next(error);

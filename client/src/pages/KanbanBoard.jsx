@@ -5,12 +5,15 @@ import Navbar from '../components/Navbar';
 import KanbanBoard from '../components/KanbanBoard';
 import TaskModal from '../components/TaskModal';
 import LoadingSpinner from '../components/LoadingSpinner';
+import { moveTaskToStatus, placeTaskInColumn, reorderTaskList } from '../utils/taskOrdering';
 
 const KanbanBoardPage = () => {
-  const { projects, fetchProjects, isLoading: projectsLoading } = useProjects();
+  const { projects, fetchProjects, isLoading: projectsLoading, error: projectsError } = useProjects();
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [tasks, setTasks] = useState([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [tasksError, setTasksError] = useState('');
+  const [tasksReloadKey, setTasksReloadKey] = useState(0);
   const [taskModal, setTaskModal] = useState({ isOpen: false, task: null });
 
   useEffect(() => {
@@ -24,26 +27,40 @@ const KanbanBoardPage = () => {
   }, [projects, selectedProjectId]);
 
   useEffect(() => {
-    if (!selectedProjectId) return;
+    if (!selectedProjectId) {
+      setTasks([]);
+      setTasksError('');
+      setTasksLoading(false);
+      return;
+    }
+    let cancelled = false;
     const loadProjectTasks = async () => {
       setTasksLoading(true);
+      setTasksError('');
       try {
         const res = await getTasks(selectedProjectId);
+        if (cancelled) return;
         setTasks(res.data.tasks);
       } catch (err) {
-        console.error('Failed to load tasks', err);
+        if (cancelled) return;
         setTasks([]);
+        setTasksError(err.response?.data?.message || 'Could not load tasks for this project.');
       } finally {
-        setTasksLoading(false);
+        if (!cancelled) setTasksLoading(false);
       }
     };
     loadProjectTasks();
-  }, [selectedProjectId]);
+    return () => { cancelled = true; };
+  }, [selectedProjectId, tasksReloadKey]);
 
   const handleTaskSubmit = async (taskData) => {
     if (taskModal.task) {
       const res = await updateTask(taskModal.task._id, taskData);
-      setTasks((prev) => prev.map((t) => (t._id === taskModal.task._id ? res.data.task : t)));
+      if (res.data.task.status !== taskModal.task.status) {
+        setTasks((prev) => placeTaskInColumn(prev, res.data.task._id, res.data.task.status, res.data.task.order));
+      } else {
+        setTasks((prev) => prev.map((t) => (t._id === taskModal.task._id ? res.data.task : t)));
+      }
     } else {
       const res = await createTask({ ...taskData, projectId: selectedProjectId });
       setTasks((prev) => [...prev, res.data.task]);
@@ -60,29 +77,23 @@ const KanbanBoardPage = () => {
     const { destination, source, draggableId } = result;
     if (!destination || (destination.droppableId === source.droppableId && destination.index === source.index)) return;
 
-    const newStatus = destination.droppableId;
-    setTasks((prev) =>
-      prev.map((t) => (t._id === draggableId ? { ...t, status: newStatus } : t))
-    );
+    const previousTasks = tasks;
+    setTasks(reorderTaskList(previousTasks, result));
 
     try {
-      await updateTaskStatus(draggableId, { status: newStatus, order: destination.index });
+      await updateTaskStatus(draggableId, { status: destination.droppableId, order: destination.index });
     } catch {
-      // Revert if error
-      setTasks((prev) =>
-        prev.map((t) => (t._id === draggableId ? { ...t, status: source.droppableId } : t))
-      );
+      setTasks(previousTasks);
     }
   };
 
   const handleStatusChange = async (taskId, newStatus) => {
-    setTasks((prev) => prev.map((t) => (t._id === taskId ? { ...t, status: newStatus } : t)));
+    const previousTasks = tasks;
+    setTasks(moveTaskToStatus(previousTasks, taskId, newStatus));
     try {
       await updateTaskStatus(taskId, { status: newStatus });
     } catch {
-      // Reload on failure
-      const res = await getTasks(selectedProjectId);
-      setTasks(res.data.tasks);
+      setTasks(previousTasks);
     }
   };
 
@@ -123,7 +134,26 @@ const KanbanBoardPage = () => {
           </div>
         </div>
 
-        {projects.length === 0 ? (
+        {projectsError && (
+          <div className="alert alert-error" role="alert" style={{ marginBottom: '20px' }}>
+            {projectsError}
+            <button className="btn btn-secondary btn-sm" style={{ marginLeft: '12px' }} onClick={fetchProjects}>Retry</button>
+          </div>
+        )}
+        {tasksError && (
+          <div className="alert alert-error" role="alert" style={{ marginBottom: '20px' }}>
+            {tasksError}
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: '12px' }}
+              onClick={() => setTasksReloadKey((key) => key + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {projectsError && projects.length === 0 ? null : projects.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">📋</div>
             <div className="empty-state-title">No projects yet</div>
@@ -131,7 +161,7 @@ const KanbanBoardPage = () => {
           </div>
         ) : tasksLoading ? (
           <LoadingSpinner text="Loading tasks..." />
-        ) : tasks.length === 0 ? (
+        ) : tasksError ? null : tasks.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">🎯</div>
             <div className="empty-state-title">No tasks in this project</div>

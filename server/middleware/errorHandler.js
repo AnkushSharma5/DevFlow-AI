@@ -5,9 +5,11 @@
  * This keeps error formatting consistent across the entire API.
  */
 const errorHandler = (err, req, res, next) => {
-  // Log full error in development; in production you'd send to a logging service
+  if (res.headersSent) return next(err);
+
+  // Avoid logging request bodies, stack traces, or driver details that may contain user data.
   if (process.env.NODE_ENV !== 'production') {
-    console.error('💥 Error:', err);
+    console.error('Request failed:', err.name || 'Error', err.message || 'Unknown error');
   }
 
   // Mongoose validation errors (e.g., required field missing)
@@ -18,7 +20,7 @@ const errorHandler = (err, req, res, next) => {
 
   // Mongoose duplicate key (e.g., duplicate email on register)
   if (err.code === 11000) {
-    const field = Object.keys(err.keyValue)[0];
+    const field = Object.keys(err.keyValue || {})[0] || 'Value';
     return res.status(400).json({ message: `${field} already in use` });
   }
 
@@ -27,9 +29,9 @@ const errorHandler = (err, req, res, next) => {
     return res.status(400).json({ message: 'Invalid ID format' });
   }
 
-  // Default: use the error's own status code or fall back to 500
-  const statusCode = err.statusCode || 500;
-  const message = err.message || 'Internal server error';
+  // Express body-parser errors include `status`; controller errors may use `statusCode`.
+  const statusCode = err.statusCode || err.status || 500;
+  const message = statusCode < 500 ? (err.message || 'Request failed') : 'Internal server error';
 
   res.status(statusCode).json({ message });
 };

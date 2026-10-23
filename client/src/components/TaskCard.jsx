@@ -1,3 +1,5 @@
+import { formatTaskDueDate, isTaskOverdue } from '../utils/taskDates';
+
 /**
  * TaskCard — draggable card displayed inside a Kanban column.
  * Used by KanbanBoard inside @hello-pangea/dnd <Draggable>.
@@ -10,11 +12,8 @@
  *   onStatusChange — (taskId, newStatus) => void (fallback dropdown)
  */
 const TaskCard = ({ task, isDragging, onEdit, onDelete, onStatusChange }) => {
-  // Determine if due date is overdue
-  const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && task.status !== 'DONE';
-  const dueDateStr = task.dueDate
-    ? new Date(task.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-    : null;
+  const isOverdue = isTaskOverdue(task.dueDate, task.status);
+  const dueDateStr = formatTaskDueDate(task.dueDate);
 
   const priorityClass = `badge badge-${task.priority?.toLowerCase()}`;
 

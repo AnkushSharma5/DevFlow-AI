@@ -1,4 +1,5 @@
 const aiService = require('../services/aiService');
+const { AIResponseError } = require('../services/aiResponse');
 
 /**
  * Wraps an aiService call with consistent error handling.
@@ -6,21 +7,20 @@ const aiService = require('../services/aiService');
  * they should return a friendly message to the user.
  */
 const handleAIError = (res, error) => {
-  console.error('AI Service Error:', error.message);
+  console.error('AI request failed:', error.code || error.status || error.name || 'unknown');
 
-  // Don't leak API keys or internal details
-  if (error.message.includes('API key') || error.message.includes('GEMINI_API_KEY') || error.message.includes('OPENAI_API_KEY')) {
+  if (error.code === 'AI_CONFIG_MISSING' || error.code === 'AI_CONFIG_INVALID') {
     return res.status(503).json({
-      message: 'AI service is not configured. Please add your API key to the server environment.',
+      message: 'AI service is not configured. Ask the administrator to check server settings.',
     });
   }
-  if (error.status === 429 || error.message.includes('quota') || error.message.includes('rate limit')) {
+  if (error instanceof AIResponseError || error.code === 'AI_RESPONSE_INVALID') {
+    return res.status(502).json({ message: 'AI returned an unexpected response. Please try again.' });
+  }
+  if (error.status === 429) {
     return res.status(429).json({ message: 'AI rate limit reached. Please try again in a moment.' });
   }
-  if (error.message.includes('JSON')) {
-    return res.status(500).json({ message: 'AI returned an unexpected response format. Please try again.' });
-  }
-  return res.status(500).json({ message: 'AI service temporarily unavailable. Please try again.' });
+  return res.status(503).json({ message: 'AI service is temporarily unavailable. Please try again.' });
 };
 
 /**
@@ -30,9 +30,6 @@ const handleAIError = (res, error) => {
 const breakdown = async (req, res) => {
   try {
     const { description } = req.body;
-    if (!description || description.trim().length < 10) {
-      return res.status(400).json({ message: 'Please provide a description (at least 10 characters).' });
-    }
     const result = await aiService.breakdownTask(description.trim());
     res.json(result);
   } catch (error) {
@@ -47,9 +44,6 @@ const breakdown = async (req, res) => {
 const explain = async (req, res) => {
   try {
     const { language, code } = req.body;
-    if (!language || !code || code.trim().length < 5) {
-      return res.status(400).json({ message: 'Please provide language and code snippet.' });
-    }
     const result = await aiService.explainCode(language.trim(), code.trim());
     res.json(result);
   } catch (error) {
@@ -64,9 +58,6 @@ const explain = async (req, res) => {
 const debug = async (req, res) => {
   try {
     const { language, code, errorMessage } = req.body;
-    if (!language || !code || !errorMessage) {
-      return res.status(400).json({ message: 'Please provide language, code, and error message.' });
-    }
     const result = await aiService.debugCode(language.trim(), code.trim(), errorMessage.trim());
     res.json(result);
   } catch (error) {
@@ -81,9 +72,6 @@ const debug = async (req, res) => {
 const docs = async (req, res) => {
   try {
     const { input, type } = req.body;
-    if (!input || input.trim().length < 10) {
-      return res.status(400).json({ message: 'Please provide code or project info to document.' });
-    }
     const result = await aiService.generateDocs(input.trim(), type || 'code');
     res.json(result);
   } catch (error) {

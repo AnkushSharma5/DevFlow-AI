@@ -1,5 +1,6 @@
 const Project = require('../models/Project');
 const Task = require('../models/Task');
+const { runProjectExclusive } = require('../services/projectLock');
 
 /**
  * GET /api/projects
@@ -57,10 +58,14 @@ const getProject = async (req, res, next) => {
  */
 const updateProject = async (req, res, next) => {
   try {
-    const { name, description, status } = req.body;
+    const updates = Object.fromEntries(
+      ['name', 'description', 'status']
+        .filter((field) => Object.hasOwn(req.body, field))
+        .map((field) => [field, req.body[field]])
+    );
     const project = await Project.findOneAndUpdate(
       { _id: req.params.id, userId: req.user._id },
-      { name, description, status },
+      updates,
       { new: true, runValidators: true }
     );
     if (!project) {
@@ -78,16 +83,18 @@ const updateProject = async (req, res, next) => {
  */
 const deleteProject = async (req, res, next) => {
   try {
-    const project = await Project.findOneAndDelete({
-      _id: req.params.id,
-      userId: req.user._id,
-    });
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
+    const deleted = await runProjectExclusive(req.user._id, req.params.id, async () => {
+      const project = await Project.findOne({ _id: req.params.id, userId: req.user._id });
+      if (!project) return false;
 
-    // Cascade: remove all tasks belonging to this project
-    await Task.deleteMany({ projectId: req.params.id });
+      // Remove dependent tasks before deleting the parent. Task mutations use
+      // the same per-project lock so they cannot create an orphan mid-cascade.
+      await Task.deleteMany({ projectId: project._id, userId: req.user._id });
+      await Project.findOneAndDelete({ _id: project._id, userId: req.user._id });
+      return true;
+    });
+
+    if (!deleted) return res.status(404).json({ message: 'Project not found' });
 
     res.json({ message: 'Project and all its tasks deleted' });
   } catch (error) {

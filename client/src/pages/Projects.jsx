@@ -11,6 +11,8 @@ import LoadingSpinner from '../components/LoadingSpinner';
 const Projects = () => {
   const { projects, isLoading, error, fetchProjects, addProject, editProject, removeProject } = useProjects();
   const [taskStats, setTaskStats] = useState({}); // { projectId: { total, done } }
+  const [taskStatsError, setTaskStatsError] = useState('');
+  const [taskStatsReloadKey, setTaskStatsReloadKey] = useState(0);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -26,23 +28,35 @@ const Projects = () => {
 
   // Fetch task stats for all projects so progress bars work
   useEffect(() => {
+    let cancelled = false;
     const fetchStats = async () => {
-      if (!projects.length) return;
-      const results = await Promise.all(
-        projects.map((p) =>
-          getTasks(p._id)
-            .then((r) => ({ id: p._id, tasks: r.data.tasks }))
-            .catch(() => ({ id: p._id, tasks: [] }))
-        )
-      );
-      const stats = {};
-      results.forEach(({ id, tasks }) => {
-        stats[id] = { total: tasks.length, done: tasks.filter((t) => t.status === 'DONE').length };
-      });
-      setTaskStats(stats);
+      if (!projects.length) {
+        setTaskStats({});
+        setTaskStatsError('');
+        return;
+      }
+      setTaskStatsError('');
+      setTaskStats(Object.fromEntries(projects.map((project) => [project._id, { loading: true }])));
+      try {
+        const results = await Promise.all(projects.map(async (project) => ({
+          id: project._id,
+          tasks: (await getTasks(project._id)).data.tasks,
+        })));
+        if (cancelled) return;
+        const stats = {};
+        results.forEach(({ id, tasks }) => {
+          stats[id] = { total: tasks.length, done: tasks.filter((task) => task.status === 'DONE').length };
+        });
+        setTaskStats(stats);
+      } catch {
+        if (cancelled) return;
+        setTaskStatsError('Task totals could not be loaded. Project progress is unavailable until retry.');
+        setTaskStats(Object.fromEntries(projects.map((project) => [project._id, { unavailable: true }])));
+      }
     };
     fetchStats();
-  }, [projects]);
+    return () => { cancelled = true; };
+  }, [projects, taskStatsReloadKey]);
 
   const openCreate = () => {
     setEditingProject(null);
@@ -106,9 +120,32 @@ const Projects = () => {
           </button>
         </div>
 
-        {error && <div className="alert alert-error" style={{ marginBottom: '20px' }}>{error}</div>}
+        {error && (
+          <div className="alert alert-error" role="alert" style={{ marginBottom: '20px' }}>
+            {error}
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: '12px' }}
+              onClick={fetchProjects}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {taskStatsError && (
+          <div className="alert alert-error" role="alert" style={{ marginBottom: '20px' }}>
+            {taskStatsError}
+            <button
+              className="btn btn-secondary btn-sm"
+              style={{ marginLeft: '12px' }}
+              onClick={() => setTaskStatsReloadKey((key) => key + 1)}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
-        {projects.length === 0 ? (
+        {error ? null : projects.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">📁</div>
             <div className="empty-state-title">No projects yet</div>
